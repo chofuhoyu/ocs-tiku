@@ -30,7 +30,7 @@ python app.py
 
 打开OCS页面，“通用”->“全局设置”->“题库配置”
 
-![](./assets/config1.png)
+![](./assets/config.png)
 
 在“题库配置”中添加如下格式的json配置，其中url替换为你自己的公网地址，然后“保存配置”即可。
 
