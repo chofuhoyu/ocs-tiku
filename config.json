@@ -1,0 +1,18 @@
+[
+    {
+        "name": "TikuAdapter题库",
+        "url": "https://cxtiku.bupt-hpc.cn/api/search",
+        "homepage": "https://github.com/DokiDoki1103/tikuAdapter",
+        "method": "post",
+        "type": "GM_xmlhttpRequest",
+        "contentType": "json",
+        "headers": {},
+        "data": {
+            "question": "${title}",
+            "options": {
+                "handler": "return (env)=>env.options?.split('\\n')"
+            }
+        },
+        "handler": "return (res)=>res.answer.allAnswer.map(i=>([res.question,i.join('#')]))"
+    }
+]
