@@ -4,6 +4,7 @@ import random
 from qwen3_model import Qwen3ModelService
 from prompt import PROMPT
 from cache import ensure_cache_db, cache_get, cache_set
+from logger import setup_root_json_logging
 
 logger = logging.getLogger(__name__)
 model = Qwen3ModelService("Qwen/Qwen3-4B")
@@ -37,7 +38,7 @@ def answer(data, guess: bool = False, cache: bool = False) -> str:
         if ans not in options:
             ans = random.choice(options)
             guessed = True
-            logger.info(
+            logger.warning(
                 "Guess enabled: model answer not in options, randomly selected one.")
 
     if not guessed and cache:
@@ -49,7 +50,7 @@ def answer(data, guess: bool = False, cache: bool = False) -> str:
 if __name__ == "__main__":
     import time
 
-    logging.basicConfig(level=logging.INFO)
+    setup_root_json_logging(logging.INFO)
 
     start_time = time.time()
     question = {'question': '实验室事故的原因是多种多样的，必须加强全方位的安全监管。',
