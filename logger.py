@@ -44,7 +44,8 @@ def init_app_logger(app, level: int = logging.INFO) -> None:
 
 
 def log_http(method: str, path: str, status: int, duration_ms: float,
-             req_body: str | None = None, resp_body: str | None = None) -> None:
+             req_body: str | None = None, resp_body: str | None = None,
+             cached: bool = False, guessed: bool = False) -> None:
     """渲染 HTTP 请求/响应日志。"""
 
     if status < 300:
@@ -61,6 +62,12 @@ def log_http(method: str, path: str, status: int, duration_ms: float,
     else:
         time_color = "red"
 
+    tags = []
+    if cached:
+        tags.append((" CACHE ", "bold white on green"))
+    if guessed:
+        tags.append((" GUESS ", "bold white on red"))
+
     title = Text.assemble(
         (method, "bold"),
         " ",
@@ -69,6 +76,7 @@ def log_http(method: str, path: str, status: int, duration_ms: float,
         (str(status), f"bold {status_color}"),
         " ",
         (f"{duration_ms}ms", time_color),
+        *[(text, style) for text, style in tags],
     )
 
     # 解析请求体和响应体

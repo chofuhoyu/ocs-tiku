@@ -39,6 +39,7 @@ def _log_request_and_response(response):
         as_text=True)
 
     if request.path == "/api/search":
+        meta = getattr(g, "_answer_meta", {})
         log_http(
             method=request.method,
             path=request.path,
@@ -46,6 +47,8 @@ def _log_request_and_response(response):
             duration_ms=duration_ms or 0,
             req_body=req_body,
             resp_body=json.dumps(resp_json, ensure_ascii=False) if resp_json else resp_text,
+            cached=meta.get("cached", False),
+            guessed=meta.get("guessed", False),
         )
     return response
 
@@ -59,11 +62,12 @@ def api_config():
 @app.route("/api/search", methods=["POST"])
 def api_search():
     data = json.loads(request.get_data(as_text=True))
-    ans = answer(
+    ans, meta = answer(
         data,
         guess=app.config.get("GUESS", False),
         cache=app.config.get("CACHE", False),
     )
+    g._answer_meta = meta
     resp = {
         "code": 0,
         "question": data.get("question", ""),

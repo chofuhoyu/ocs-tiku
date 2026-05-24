@@ -18,7 +18,8 @@ DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/ch
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL_ID = os.getenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
 
-def answer(data, guess: bool = False, cache: bool = False) -> list:
+def answer(data, guess: bool = False, cache: bool = False) -> tuple[list[str], dict]:
+    meta = {"cached": False, "guessed": False}
     options = []
     # 统一构造稳定、可复现的缓存 key：dict 用排序后的 JSON，其他类型用 str
     if isinstance(data, dict):
@@ -32,10 +33,11 @@ def answer(data, guess: bool = False, cache: bool = False) -> list:
         hit = cache_get(cache_key)
         if hit is not None:
             logger.info("Cache hit for question")
+            meta["cached"] = True
             try:
-                return json.loads(hit)
+                return json.loads(hit), meta
             except json.JSONDecodeError:
-                return [hit]
+                return [hit], meta
 
     messages = PROMPT + "\n" + str(data)
 
@@ -72,10 +74,12 @@ def answer(data, guess: bool = False, cache: bool = False) -> list:
             logger.warning(
                 "Guess enabled: model answer(s) not in options, randomly selected one.")
 
-    if not guessed and cache:
+    if guessed:
+        meta["guessed"] = True
+    elif cache:
         cache_set(cache_key, json.dumps(ans_list, ensure_ascii=False))
 
-    return ans_list
+    return ans_list, meta
 
 
 if __name__ == "__main__":
@@ -106,7 +110,7 @@ if __name__ == "__main__":
     for q in test_questions:
         start_time = time.time()
         cache_key = json.dumps(q, ensure_ascii=False, sort_keys=True)
-        ans_list = answer(q, guess=True, cache=True)
+        ans_list, _meta = answer(q, guess=True, cache=True)
         duration = round((time.time() - start_time) * 1000)
         results.append(("API调用", ans_list, duration, q.get("options", [])))
         print(f"  [{q['type']}] {'#'.join(ans_list)}")
@@ -116,7 +120,7 @@ if __name__ == "__main__":
     for q in test_questions:
         start_time = time.time()
         cache_key = json.dumps(q, ensure_ascii=False, sort_keys=True)
-        ans_list = answer(q, guess=True, cache=True)
+        ans_list, _meta = answer(q, guess=True, cache=True)
         duration = round((time.time() - start_time) * 1000)
         results.append(("缓存命中", ans_list, duration, q.get("options", [])))
         print(f"  [{q['type']}] {'#'.join(ans_list)}")
