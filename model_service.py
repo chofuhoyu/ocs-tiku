@@ -2,6 +2,7 @@ import logging
 import json
 import os
 import random
+import threading
 import requests
 from dotenv import load_dotenv
 
@@ -18,12 +19,23 @@ DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/ch
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL_ID = os.getenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
 
+_IN_FLIGHT: dict[str, threading.Event] = {}
+_IN_FLIGHT_LOCK = threading.Lock()
+
+
+def _normalize(text: str) -> str:
+    """将 NBSP 等非标准空白转为普通空格，并去除首尾空白。"""
+    return text.replace("\xa0", " ").strip()
+
+
 def answer(data, guess: bool = False, cache: bool = False) -> tuple[list[str], dict]:
     meta = {"cached": False, "guessed": False}
     options = []
     # 统一构造稳定、可复现的缓存 key：dict 用排序后的 JSON，其他类型用 str
     if isinstance(data, dict):
-        options = data.get("options", []) or []
+        raw_options = data.get("options", []) or []
+        options = [_normalize(o) for o in raw_options]
+        data["options"] = options
         cache_key = json.dumps(data, ensure_ascii=False, sort_keys=True)
     else:
         cache_key = str(data)
@@ -39,47 +51,75 @@ def answer(data, guess: bool = False, cache: bool = False) -> tuple[list[str], d
             except json.JSONDecodeError:
                 return [hit], meta
 
-    messages = PROMPT + "\n" + str(data)
+        # 并发去重：同一 key 只让第一个请求调 API，后续请求等缓存写入
+        with _IN_FLIGHT_LOCK:
+            event = _IN_FLIGHT.get(cache_key)
+            if event is None:
+                event = threading.Event()
+                _IN_FLIGHT[cache_key] = event
+                is_first = True
+            else:
+                is_first = False
 
-    # 调用DeepSeek API
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
-    }
-
-    payload = {
-        "model": DEEPSEEK_MODEL_ID,
-        "messages": [
-            {"role": "user", "content": messages}
-        ],
-        "max_tokens": 4096
-    }
+        if not is_first:
+            logger.info("Dedup: waiting for in-flight request to complete")
+            event.wait()
+            # 此时第一个请求已将结果写入缓存
+            hit = cache_get(cache_key)
+            if hit is not None:
+                meta["cached"] = True  # 对等待者来说等同于缓存命中
+                try:
+                    return json.loads(hit), meta
+                except json.JSONDecodeError:
+                    return [hit], meta
 
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload)
-        response.raise_for_status()  # 如果响应状态码不是200，抛出异常
-        result = response.json()
-        ans_raw = result["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        logger.error(f"Failed to call DeepSeek API: {e}")
-        ans_raw = "API调用失败" if not options else options[0]
+        messages = PROMPT + "\n" + str(data)
 
-    ans_list = [a.strip() for a in ans_raw.split("#")]
+        # 调用DeepSeek API
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+        }
 
-    guessed = False
-    if guess and isinstance(options, list) and len(options) > 0:
-        if not all(a in options for a in ans_list):
-            ans_list = [random.choice(options)]
-            guessed = True
-            logger.warning(
-                "Guess enabled: model answer(s) not in options, randomly selected one.")
+        payload = {
+            "model": DEEPSEEK_MODEL_ID,
+            "messages": [
+                {"role": "user", "content": messages}
+            ],
+            "max_tokens": 4096
+        }
 
-    if guessed:
-        meta["guessed"] = True
-    elif cache:
-        cache_set(cache_key, json.dumps(ans_list, ensure_ascii=False))
+        try:
+            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload)
+            response.raise_for_status()  # 如果响应状态码不是200，抛出异常
+            result = response.json()
+            ans_raw = _normalize(result["choices"][0]["message"]["content"])
+        except Exception as e:
+            logger.error(f"Failed to call DeepSeek API: {e}")
+            ans_raw = "API调用失败" if not options else _normalize(options[0])
 
-    return ans_list, meta
+        ans_list = [a.strip() for a in ans_raw.split("#")]
+
+        guessed = False
+        if guess and isinstance(options, list) and len(options) > 0:
+            if not all(a in options for a in ans_list):
+                ans_list = [random.choice(options)]
+                guessed = True
+                logger.warning(
+                    f"Guess enabled: model answered '{ans_raw}' which is not in options, randomly selected one.")
+
+        if guessed:
+            meta["guessed"] = True
+        elif cache:
+            cache_set(cache_key, json.dumps(ans_list, ensure_ascii=False))
+
+        return ans_list, meta
+    finally:
+        if cache and is_first:
+            event.set()
+            with _IN_FLIGHT_LOCK:
+                _IN_FLIGHT.pop(cache_key, None)
 
 
 if __name__ == "__main__":

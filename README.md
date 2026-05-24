@@ -65,7 +65,7 @@ python app.py --guess --cache
             "question": "${title}",
             "type": "${type}",
             "options": {
-                "handler": "return (env)=>env.options?.split('\\n').filter(s => s.trim() && !/^[A-F]\\.?$/.test(s.trim()))"
+                "handler": "return (env)=>env.options?.split('\\n').map(s=>s.replace(/\\u00a0/g,' ').trim()).filter(s => s && !/^[A-F]\\.?$/.test(s))"
             }
         },
         "handler": "return (res)=>res.answer.allAnswer.map(i=>([res.question,i.join('#')]))"

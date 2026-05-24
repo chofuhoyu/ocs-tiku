@@ -100,7 +100,10 @@ def log_http(method: str, path: str, status: int, duration_ms: float,
 
     question = (req_data or {}).get("question") or (resp_data or {}).get("question", "")
     qtype = (req_data or {}).get("type", "")
-    options = (req_data or {}).get("options") or (resp_data or {}).get("options", [])
+    raw_options = (req_data or {}).get("options") or []
+    resp_options = (resp_data or {}).get("options") or []
+    # 用响应中的 options 显示（已归一化），与请求的 raw 对比
+    options = resp_options or raw_options
     answers = []
     if resp_data:
         answers = (resp_data.get("answer") or {}).get("allAnswer", [[]])[0]
@@ -113,7 +116,10 @@ def log_http(method: str, path: str, status: int, duration_ms: float,
         lines = []
         for i, o in enumerate(options):
             marker = "✓" if answers and o in answers else " "
-            lines.append(f"[{marker}] {i + 1}. {o}")
+            note = ""
+            if raw_options and i < len(raw_options) and raw_options[i] != o:
+                note = " [dim](normalized)[/dim]"
+            lines.append(f"[{marker}] {i + 1}. {o}{note}")
         table.add_row("options", "\n".join(lines))
     if answers:
         table.add_row("answer", Text(" # ".join(answers), style="bold green"))
