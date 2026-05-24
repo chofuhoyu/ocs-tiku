@@ -72,3 +72,13 @@ def cache_set(k: str, v: str):
             _DB.commit()
         except Exception as e:
             logger.warning(f"Cache set failed: {e}")
+
+
+def cache_delete(k: str):
+    ensure_cache_db()
+    with _DB_LOCK:
+        try:
+            _DB.execute("DELETE FROM qa_cache WHERE k = ?", (k,))
+            _DB.commit()
+        except Exception as e:
+            logger.warning(f"Cache delete failed: {e}")

@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from prompt import PROMPT
-from cache import ensure_cache_db, cache_get, cache_set
+from cache import ensure_cache_db, cache_get, cache_set, cache_delete
 from logger import setup_root_json_logging
 
 logger = logging.getLogger(__name__)
@@ -79,20 +79,95 @@ if __name__ == "__main__":
 
     setup_root_json_logging(logging.INFO)
 
-    start_time = time.time()
-    question = {'question': '实验室事故的原因是多种多样的，必须加强全方位的安全监管。',
-                'options': ['对', '错']}
-    print(answer(question, guess=True, cache=True))
-    print("cost time:", time.time() - start_time)
+    test_questions = [
+        {'question': '实验室事故的原因是多种多样的，必须加强全方位的安全监管。',
+         'options': ['对', '错']},
+        {'question': '实验室安全教育应该常抓不懈，其目的在于：',
+         'options': [
+             '可以据此设置专门的实验室安全教育岗位。',
+             '使研究人员从思想上树立起实验室安全意识，克服存在的侥幸心理，以保证相关规范的贯彻。',
+             '促使研究人员全文背诵实验室安全规范。',
+             '使研究人员尽量少做实验以免发生安全问题。'
+         ]},
+    ]
 
-    start_time = time.time()
-    question = {'question': '实验室事故的原因是多种多样的，必须加强全方位的安全监管。',
-                'options': ['对', '错']}
-    print(answer(question, guess=True, cache=True))
-    print("cost time:", time.time() - start_time)
+    results = []  # (label, answer, duration, options)
 
-    start_time = time.time()
-    question = {'question': '实验室安全教育应该常抓不懈，其目的在于：', 'options': [
-        '可以据此设置专门的实验室安全教育岗位。', '使研究人员从思想上树立起实验室安全意识，克服存在的侥幸心理，以保证相关规范的贯彻。', '促使研究人员全文背诵实验室安全规范。', '使研究人员尽量少做实验以免发生安全问题。']}
-    print(answer(question, guess=False, cache=True))
-    print("cost time:", time.time() - start_time)
+    print("=== 第一轮：API调用 ===")
+    for q in test_questions:
+        start_time = time.time()
+        cache_key = json.dumps(q, ensure_ascii=False, sort_keys=True)
+        ans = answer(q, guess=True, cache=True)
+        duration = round((time.time() - start_time) * 1000)
+        results.append(("API调用", ans, duration, q.get("options", [])))
+        print(f"  {ans}")
+        print(f"  cost time: {duration}ms")
+
+    print("\n=== 第二轮：缓存命中 ===")
+    for q in test_questions:
+        start_time = time.time()
+        cache_key = json.dumps(q, ensure_ascii=False, sort_keys=True)
+        ans = answer(q, guess=True, cache=True)
+        duration = round((time.time() - start_time) * 1000)
+        results.append(("缓存命中", ans, duration, q.get("options", [])))
+        print(f"  {ans}")
+        print(f"  cost time: {duration}ms")
+
+    print("\n=== 清理测试缓存 ===")
+    for q in test_questions:
+        cache_key = json.dumps(q, ensure_ascii=False, sort_keys=True)
+        cache_delete(cache_key)
+
+    # 验证缓存已清理
+    cache_cleared = True
+    for q in test_questions:
+        cache_key = json.dumps(q, ensure_ascii=False, sort_keys=True)
+        if cache_get(cache_key) is not None:
+            cache_cleared = False
+            break
+
+    # ====== 测试总结 ======
+    print("\n" + "=" * 50)
+    print("  测试总结")
+    print("=" * 50)
+
+    checks = []
+
+    # 1. API调用延迟应 > 100ms
+    api_times = [r[2] for r in results if r[0] == "API调用"]
+    api_ok = all(t > 100 for t in api_times)
+    checks.append(("API调用延迟 > 100ms", api_ok, f"{api_times}"))
+
+    # 2. 缓存命中延迟应 < 10ms
+    cache_times = [r[2] for r in results if r[0] == "缓存命中"]
+    cache_ok = all(t < 10 for t in cache_times)
+    checks.append(("缓存命中延迟 < 10ms", cache_ok, f"{cache_times}"))
+
+    # 3. 所有答案非空
+    all_answers = [(r[1], r[3]) for r in results]
+    answer_ok = all(ans for ans, _ in all_answers)
+    checks.append(("答案非空", answer_ok, ""))
+
+    # 4. 答案在选项中
+    in_options_ok = all(ans in opts for ans, opts in all_answers)
+    checks.append(("答案在选项中", in_options_ok, ""))
+
+    # 5. 缓存清理成功
+    checks.append(("缓存清理成功", cache_cleared, ""))
+
+    all_pass = True
+    for label, ok, detail in checks:
+        status = "PASS" if ok else "FAIL"
+        if not ok:
+            all_pass = False
+        line = f"  [{status}] {label}"
+        if detail:
+            line += f"  ({detail})"
+        print(line)
+
+    print("=" * 50)
+    if all_pass:
+        print("  结论：全部通过，服务运行正常")
+    else:
+        print("  结论：存在失败项，请检查")
+    print("=" * 50)
