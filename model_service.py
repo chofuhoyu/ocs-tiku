@@ -92,13 +92,23 @@ def answer(data, guess: bool = False, cache: bool = False) -> tuple[list[str], d
             "max_tokens": 4096
         }
 
-        try:
-            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload)
-            response.raise_for_status()  # 如果响应状态码不是200，抛出异常
-            result = response.json()
-            ans_raw = _normalize(result["choices"][0]["message"]["content"])
-        except Exception as e:
-            logger.error(f"Failed to call DeepSeek API: {e}")
+        ans_raw = None
+        for attempt in range(3):
+            try:
+                response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=30)
+                response.raise_for_status()
+                result = response.json()
+                ans_raw = _normalize(result["choices"][0]["message"]["content"])
+                break
+            except requests.exceptions.Timeout:
+                logger.warning(f"DeepSeek API timeout (attempt {attempt + 1}/3)")
+            except requests.exceptions.ConnectionError:
+                logger.warning(f"DeepSeek API connection failed (attempt {attempt + 1}/3)")
+            except Exception as e:
+                logger.error(f"Failed to call DeepSeek API: {e}")
+                break
+            time.sleep(1)
+        if ans_raw is None:
             ans_raw = "API调用失败" if not options else _normalize(options[0])
 
         ans_list = [a.strip() for a in ans_raw.split("#")]
