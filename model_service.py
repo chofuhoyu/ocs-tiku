@@ -18,7 +18,7 @@ DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/ch
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL_ID = os.getenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
 
-def answer(data, guess: bool = False, cache: bool = False) -> str:
+def answer(data, guess: bool = False, cache: bool = False) -> list:
     options = []
     # 统一构造稳定、可复现的缓存 key：dict 用排序后的 JSON，其他类型用 str
     if isinstance(data, dict):
@@ -32,10 +32,13 @@ def answer(data, guess: bool = False, cache: bool = False) -> str:
         hit = cache_get(cache_key)
         if hit is not None:
             logger.info("Cache hit for question")
-            return hit
+            try:
+                return json.loads(hit)
+            except json.JSONDecodeError:
+                return [hit]
 
     messages = PROMPT + "\n" + str(data)
-    
+
     # 调用DeepSeek API
     headers = {
         "Content-Type": "application/json",
@@ -49,29 +52,30 @@ def answer(data, guess: bool = False, cache: bool = False) -> str:
         ],
         "max_tokens": 4096
     }
-    
+
     try:
         response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload)
         response.raise_for_status()  # 如果响应状态码不是200，抛出异常
         result = response.json()
-        ans = result["choices"][0]["message"]["content"].strip()
+        ans_raw = result["choices"][0]["message"]["content"].strip()
     except Exception as e:
         logger.error(f"Failed to call DeepSeek API: {e}")
-        # 如果API调用失败，可以选择返回一个默认答案或者抛出异常
-        ans = "API调用失败" if not options else options[0]
+        ans_raw = "API调用失败" if not options else options[0]
+
+    ans_list = [a.strip() for a in ans_raw.split("#")]
 
     guessed = False
     if guess and isinstance(options, list) and len(options) > 0:
-        if ans not in options:
-            ans = random.choice(options)
+        if not all(a in options for a in ans_list):
+            ans_list = [random.choice(options)]
             guessed = True
             logger.warning(
-                "Guess enabled: model answer not in options, randomly selected one.")
+                "Guess enabled: model answer(s) not in options, randomly selected one.")
 
     if not guessed and cache:
-        cache_set(cache_key, ans)
+        cache_set(cache_key, json.dumps(ans_list, ensure_ascii=False))
 
-    return ans
+    return ans_list
 
 
 if __name__ == "__main__":
@@ -81,36 +85,41 @@ if __name__ == "__main__":
 
     test_questions = [
         {'question': '实验室事故的原因是多种多样的，必须加强全方位的安全监管。',
+         'type': 'judgement',
          'options': ['对', '错']},
         {'question': '实验室安全教育应该常抓不懈，其目的在于：',
+         'type': 'single',
          'options': [
              '可以据此设置专门的实验室安全教育岗位。',
              '使研究人员从思想上树立起实验室安全意识，克服存在的侥幸心理，以保证相关规范的贯彻。',
              '促使研究人员全文背诵实验室安全规范。',
              '使研究人员尽量少做实验以免发生安全问题。'
          ]},
+        {'question': '以下哪些属于实验室安全防护装备？',
+         'type': 'multiple',
+         'options': ['安全眼镜', '防护手套', '运动鞋', '实验室外套']},
     ]
 
-    results = []  # (label, answer, duration, options)
+    results = []  # (label, answer_list, duration, options)
 
     print("=== 第一轮：API调用 ===")
     for q in test_questions:
         start_time = time.time()
         cache_key = json.dumps(q, ensure_ascii=False, sort_keys=True)
-        ans = answer(q, guess=True, cache=True)
+        ans_list = answer(q, guess=True, cache=True)
         duration = round((time.time() - start_time) * 1000)
-        results.append(("API调用", ans, duration, q.get("options", [])))
-        print(f"  {ans}")
+        results.append(("API调用", ans_list, duration, q.get("options", [])))
+        print(f"  [{q['type']}] {'#'.join(ans_list)}")
         print(f"  cost time: {duration}ms")
 
     print("\n=== 第二轮：缓存命中 ===")
     for q in test_questions:
         start_time = time.time()
         cache_key = json.dumps(q, ensure_ascii=False, sort_keys=True)
-        ans = answer(q, guess=True, cache=True)
+        ans_list = answer(q, guess=True, cache=True)
         duration = round((time.time() - start_time) * 1000)
-        results.append(("缓存命中", ans, duration, q.get("options", [])))
-        print(f"  {ans}")
+        results.append(("缓存命中", ans_list, duration, q.get("options", [])))
+        print(f"  [{q['type']}] {'#'.join(ans_list)}")
         print(f"  cost time: {duration}ms")
 
     print("\n=== 清理测试缓存 ===")
@@ -144,12 +153,15 @@ if __name__ == "__main__":
     checks.append(("缓存命中延迟 < 10ms", cache_ok, f"{cache_times}"))
 
     # 3. 所有答案非空
-    all_answers = [(r[1], r[3]) for r in results]
-    answer_ok = all(ans for ans, _ in all_answers)
+    all_answer_lists = [r[1] for r in results]
+    answer_ok = all(len(a) > 0 and all(item for item in a) for a in all_answer_lists)
     checks.append(("答案非空", answer_ok, ""))
 
     # 4. 答案在选项中
-    in_options_ok = all(ans in opts for ans, opts in all_answers)
+    in_options_ok = all(
+        all(item in opts for item in ans_list)
+        for ans_list, (_, _, _, opts) in zip(all_answer_lists, results)
+    )
     checks.append(("答案在选项中", in_options_ok, ""))
 
     # 5. 缓存清理成功

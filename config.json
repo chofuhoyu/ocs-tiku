@@ -9,6 +9,7 @@
         "headers": {},
         "data": {
             "question": "${title}",
+            "type": "${type}",
             "options": {
                 "handler": "return (env)=>env.options?.split('\\n')"
             }

@@ -78,9 +78,7 @@ def api_search():
         "question": data.get("question", ""),
         "options": data.get("options", []),
         "answer": {
-            "allAnswer": [
-                [ans],
-            ]
+            "allAnswer": [ans]
         }
     }
     return jsonify(resp), 200

@@ -63,6 +63,7 @@ python app.py --guess --cache
         "headers": {},
         "data": {
             "question": "${title}",
+            "type": "${type}",
             "options": {
                 "handler": "return (env)=>env.options?.split('\\n')"
             }
