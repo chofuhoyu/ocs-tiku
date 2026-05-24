@@ -1,7 +1,7 @@
 [
     {
         "name": "TikuAdapter题库",
-        "url": "https://cxtiku.bupt-hpc.cn/api/search",
+        "url": "http://127.0.0.1:9999/api/search",
         "homepage": "https://github.com/DokiDoki1103/tikuAdapter",
         "method": "post",
         "type": "GM_xmlhttpRequest",
