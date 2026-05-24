@@ -3,6 +3,7 @@ import json
 import os
 import random
 import threading
+import time
 import requests
 from dotenv import load_dotenv
 
@@ -64,7 +65,8 @@ def answer(data, guess: bool = False, cache: bool = False) -> tuple[list[str], d
         if not is_first:
             logger.info("Dedup: waiting for in-flight request to complete")
             event.wait()
-            # 此时第一个请求已将结果写入缓存
+            time.sleep(0.5)
+            # 此时第一个请求已将结果写入缓存，延迟半秒错开响应
             hit = cache_get(cache_key)
             if hit is not None:
                 meta["cached"] = True  # 对等待者来说等同于缓存命中
