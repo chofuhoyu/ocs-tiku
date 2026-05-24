@@ -9,7 +9,7 @@ load_dotenv()
 
 from prompt import PROMPT
 from cache import ensure_cache_db, cache_get, cache_set, cache_delete
-from logger import setup_root_json_logging
+from logger import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def answer(data, guess: bool = False, cache: bool = False) -> list:
 if __name__ == "__main__":
     import time
 
-    setup_root_json_logging(logging.INFO)
+    setup_logging(logging.INFO)
 
     test_questions = [
         {'question': '实验室事故的原因是多种多样的，必须加强全方位的安全监管。',

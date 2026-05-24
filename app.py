@@ -2,7 +2,7 @@ from flask import Flask, json, request, jsonify
 import logging
 import time
 from flask import g
-from logger import init_app_logger
+from logger import init_app_logger, log_http
 
 from model_service import answer
 
@@ -29,8 +29,6 @@ def _log_request_and_response(response):
     if hasattr(g, "_start_time"):
         duration_ms = round((time.perf_counter() - g._start_time) * 1000, 2)
 
-    req_args = request.args.to_dict(flat=True)
-    req_json = getattr(g, "_request_json", None)
     req_body = getattr(g, "_request_body", None)
 
     try:
@@ -40,22 +38,15 @@ def _log_request_and_response(response):
     resp_text = None if resp_json is not None else response.get_data(
         as_text=True)
 
-    app.logger.info(
-        "request handled",
-        extra={
-            "event": "http_request",
-            "method": request.method,
-            "path": request.path,
-            "status": response.status_code,
-            "duration_ms": duration_ms,
-            "remote_addr": request.remote_addr,
-            "query": req_args,
-            "request_json": req_json if req_json is not None else None,
-            "request_body": None if req_json is not None else req_body,
-            "response_json": resp_json if resp_json is not None else None,
-            "response_body": None if resp_json is not None else resp_text,
-        },
-    )
+    if request.path == "/api/search":
+        log_http(
+            method=request.method,
+            path=request.path,
+            status=response.status_code,
+            duration_ms=duration_ms or 0,
+            req_body=req_body,
+            resp_body=json.dumps(resp_json, ensure_ascii=False) if resp_json else resp_text,
+        )
     return response
 
 

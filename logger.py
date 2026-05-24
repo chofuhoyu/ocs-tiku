@@ -1,58 +1,36 @@
 import json
 import logging
-import sys
-from datetime import datetime, timezone
+import re
 
-_RESERVED = {
-    "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
-    "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
-    "created", "msecs", "relativeCreated", "thread", "threadName",
-    "processName", "process"
-}
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
+console = Console()
 
-class JSONFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        base = {
-            "time": datetime.now(timezone.utc).isoformat(),
-            "level": record.levelname,
-            "name": record.name,
-            "message": record.getMessage(),
-        }
-        if record.exc_info:
-            base["exc_info"] = self.formatException(record.exc_info)
-        for k, v in record.__dict__.items():
-            if k not in _RESERVED:
-                base[k] = v
-        return json.dumps(base, ensure_ascii=False)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def setup_root_json_logging(level: int = logging.INFO) -> None:
-    """将 JSON handler 安装到根 logger，使所有子 logger（logging.getLogger 获取）生效。"""
-    root = logging.getLogger()
-    root.setLevel(level)
-    root.handlers.clear()
-    handler = logging.StreamHandler(stream=sys.stdout)
-    handler.setFormatter(JSONFormatter())
-    root.addHandler(handler)
-    root.propagate = False  # 根 logger 不再向上级传播
-    logging.captureWarnings(True)
+class _StripAnsiFilter(logging.Filter):
+    def filter(self, record):
+        record.msg = _ANSI_RE.sub("", str(record.msg))
+        return True
 
 
-def get_json_logger(name: str = "app", level: int = logging.INFO) -> logging.Logger:
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    logger.handlers.clear()
-    handler = logging.StreamHandler(stream=sys.stdout)
-    handler.setFormatter(JSONFormatter())
-    logger.addHandler(handler)
-    logger.propagate = False
-    return logger
+def setup_logging(level: int = logging.INFO) -> None:
+    """配置根 logger，使用 RichHandler 输出彩色日志。"""
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
+    )
 
 
 def init_app_logger(app, level: int = logging.INFO) -> None:
-    # 改为初始化根 logger，并让 app/werkzeug 走 propagate
-    setup_root_json_logging(level)
+    setup_logging(level)
 
     app.logger.handlers.clear()
     app.logger.setLevel(level)
@@ -62,3 +40,77 @@ def init_app_logger(app, level: int = logging.INFO) -> None:
     werk.handlers.clear()
     werk.setLevel(level)
     werk.propagate = True
+    werk.addFilter(_StripAnsiFilter())
+
+
+def log_http(method: str, path: str, status: int, duration_ms: float,
+             req_body: str | None = None, resp_body: str | None = None) -> None:
+    """渲染 HTTP 请求/响应日志。"""
+
+    if status < 300:
+        status_color = "green"
+    elif status < 400:
+        status_color = "yellow"
+    else:
+        status_color = "red"
+
+    if duration_ms < 500:
+        time_color = "green"
+    elif duration_ms < 2000:
+        time_color = "yellow"
+    else:
+        time_color = "red"
+
+    title = Text.assemble(
+        (method, "bold"),
+        " ",
+        (path, "cyan"),
+        " ",
+        (str(status), f"bold {status_color}"),
+        " ",
+        (f"{duration_ms}ms", time_color),
+    )
+
+    # 解析请求体和响应体
+    req_data = None
+    if req_body:
+        try:
+            req_data = json.loads(req_body)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    resp_data = None
+    if resp_body:
+        try:
+            resp_data = json.loads(resp_body) if isinstance(resp_body, str) else resp_body
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    table = Table(show_header=False, box=None, padding=(0, 1), expand=False)
+    table.add_column("key", style="bold cyan", width=10)
+    table.add_column("value", max_width=100)
+
+    question = (req_data or {}).get("question") or (resp_data or {}).get("question", "")
+    qtype = (req_data or {}).get("type", "")
+    options = (req_data or {}).get("options") or (resp_data or {}).get("options", [])
+    answers = []
+    if resp_data:
+        answers = (resp_data.get("answer") or {}).get("allAnswer", [[]])[0]
+
+    if question:
+        table.add_row("question", question)
+    if qtype:
+        table.add_row("type", qtype)
+    if options:
+        lines = []
+        for i, o in enumerate(options):
+            marker = "✓" if answers and o in answers else " "
+            lines.append(f"[{marker}] {i + 1}. {o}")
+        table.add_row("options", "\n".join(lines))
+    if answers:
+        table.add_row("answer", Text(" # ".join(answers), style="bold green"))
+
+    if table.rows:
+        console.print(Panel(table, title=title, title_align="left", border_style="grey50"))
+    else:
+        console.print(f"  {title}")
